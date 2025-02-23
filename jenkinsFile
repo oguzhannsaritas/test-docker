@@ -1,0 +1,90 @@
+pipeline {
+    agent any
+    environment {
+        NODE_VERSION = '18'
+        PLAYWRIGHT_TEST_DIR = '/var/jenkins_home/workspace/playwrightTest'
+        GITLAB_REPO_URL = 'YOUR GİT LAB REPO URL'
+    }
+    parameters {
+        string(name: 'TEST_PATH', defaultValue: 'tests/test-sign-in/testSignIn.spec.js', description: 'Çalıştırılacak test dosyasının yolu')
+    }
+    stages {
+        stage('Setup Jenkins Environment') {
+            steps {
+                script {
+                    sh """
+                        echo "Setting up Jenkins Environment..."
+                        apt-get update && apt-get install -y xvfb xauth
+                    """
+                }
+            }
+        }
+        stage('Checkout Repository') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'gitlab-credentials', usernameVariable: 'GITLAB_USERNAME', passwordVariable: 'GITLAB_TOKEN')]) {
+                    script {
+                        sh "mkdir -p $PLAYWRIGHT_TEST_DIR"
+                        sh """
+                            echo "Checking if repository exists..."
+                            if [ -d "$PLAYWRIGHT_TEST_DIR/.git" ]; then
+                                echo "Repository found, pulling latest changes..."
+                                cd $PLAYWRIGHT_TEST_DIR && git reset --hard HEAD && git pull
+                            else
+                                echo "Cloning repository..."
+                                git clone https://$GITLAB_USERNAME:$GITLAB_TOKEN@gitlab.com/YOUR REPO $PLAYWRIGHT_TEST_DIR
+                            fi
+                        """
+                        sh "ls -lah $PLAYWRIGHT_TEST_DIR"
+                    }
+                }
+            }
+        }
+        stage('Setup Node.js and Dependencies') {
+            steps {
+                script {
+                    sh """
+                        echo "Installing dependencies..."
+                        cd $PLAYWRIGHT_TEST_DIR
+                        npm install
+                        npx playwright install --with-deps
+                    """
+                }
+            }
+        }
+        stage('Run Selected Playwright Test (Headless Mode)') {
+            steps {
+                script {
+                    sh """
+                        echo "Starting Playwright test: $TEST_PATH"
+                        cd $PLAYWRIGHT_TEST_DIR
+                        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+                        npx playwright test "$TEST_PATH" | tee playwright-test-output.log
+                    """
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                echo ":white_check_mark: Pipeline tamamlandı! Test sonuçları Playwright rapor dosyasında bulunabilir."
+                sh "cat $PLAYWRIGHT_TEST_DIR/playwright-test-output.log || true"
+            }
+            archiveArtifacts artifacts: '**/playwright-test-output.log', fingerprint: true
+        }
+        success {
+            script {
+                echo ":tada: Test başarılı: $TEST_PATH"
+            }
+        }
+        failure {
+            script {
+                echo ":x: Test başarısız: $TEST_PATH Logları kontrol et!"
+                sh """
+                    echo "Fetching Playwright logs..."
+                    cat $PLAYWRIGHT_TEST_DIR/playwright-test-output.log || true
+                """
+            }
+        }
+    }
+}
